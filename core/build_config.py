@@ -360,23 +360,33 @@ def build_outbounds(urls: list[str]) -> tuple[list[dict], list[str]]:
 
         try:
             if scheme == "hysteria2":
-                outbounds.append(parse_hysteria2(parsed, query, tag))
+                node = parse_hysteria2(parsed, query, tag)
             elif scheme == "vless":
-                outbounds.append(parse_vless(parsed, query, tag))
+                node = parse_vless(parsed, query, tag)
             elif scheme == "tuic":
-                outbounds.append(parse_tuic(parsed, query, tag))
+                node = parse_tuic(parsed, query, tag)
             elif scheme in ("ss", "shadowsocks"):
-                outbounds.append(parse_shadowsocks(parsed, query, tag))
+                node = parse_shadowsocks(parsed, query, tag)
             elif scheme == "vmess":
-                outbounds.append(parse_vmess(parsed, query, tag))
+                node = parse_vmess(parsed, query, tag)
             elif scheme == "trojan":
-                outbounds.append(parse_trojan(parsed, query, tag))
+                node = parse_trojan(parsed, query, tag)
             else:
-                raise NodeBuildError(line_no, f"不支持的协议 {scheme!r}")
+                # 智能忽略不支持的协议（例如公告或老旧格式），保障机场其它主流节点正常使用
+                import logging
+                logging.getLogger("panel").warning(f"[网枢] 行 {line_no}: 优雅忽略暂不支持的节点协议 {scheme!r}")
+                continue
+                
+            outbounds.append(node)
+            tags.append(tag)
         except ValueError as e:
-            raise NodeBuildError(line_no, str(e)) from e
+            # 智能忽略格式错误的个别异常节点，保障其它大量正常节点能够成功生成配置
+            import logging
+            logging.getLogger("panel").warning(f"[网枢] 行 {line_no}: 节点 {tag} 格式错误，已优雅忽略。错误详情: {e}")
+            continue
 
-        tags.append(tag)
+    if not outbounds:
+        raise NodeBuildError(1, "节点列表中无可供解析的有效协议节点")
 
     return outbounds, tags
 

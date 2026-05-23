@@ -407,7 +407,7 @@ def _import_vault_urls(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入加密库失败: {e}") from e
     _ensure_vault_record(vault_name)
-    total = _rebuild_config_from_vaults(vault_password, clash_secret)
+    # 优先持久化存储已导入文件中的节点元数据，避免后续配置重载（如多密码库合并）发生异常导致节点数不一致及显示为 0 的故障
     _store_vault_import_metadata(
         vault_name,
         source_url=source_url,
@@ -415,6 +415,7 @@ def _import_vault_urls(
         unique_count=len(unique_urls),
         duplicate_count=duplicate_count,
     )
+    total = _rebuild_config_from_vaults(vault_password, clash_secret)
     return len(unique_urls), duplicate_count, total
 
 
