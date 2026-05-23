@@ -11,6 +11,9 @@ services:
       - "${SINGBOX_HTTP_PORT:-2080}:2080"
       # 可选的公网 HTTPS 正向代理端口 -> 容器内 TLS 代理端口。
       - "${SINGBOX_HTTPS_PROXY_PUBLIC_PORT:-2443}:2443"
+    environment:
+      # 兼容旧版 DNS 服务器配置格式（sing-box 1.14+ 已废弃旧格式）
+      ENABLE_DEPRECATED_LEGACY_DNS_SERVERS: "true"
     command: run -c /etc/sing-box/config.json
     healthcheck:
       test:
