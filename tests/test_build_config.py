@@ -80,6 +80,7 @@ class BuildConfigTests(unittest.TestCase):
         node = cfg["outbounds"][1]
         self.assertEqual(node["type"], "vless")
         self.assertNotIn("tls", node)
+        self.assertNotIn("transport", node)
 
     def test_vless_reality_enables_tls(self) -> None:
         cfg = build_singbox_config([
@@ -89,6 +90,18 @@ class BuildConfigTests(unittest.TestCase):
         node = cfg["outbounds"][1]
         self.assertTrue(node["tls"]["enabled"])
         self.assertTrue(node["tls"]["reality"]["enabled"])
+
+    def test_build_singbox_config_avoids_removed_singbox_legacy_fields(self) -> None:
+        cfg = build_singbox_config([
+            "vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp#one"
+        ])
+
+        self.assertNotIn("dns", cfg)
+        self.assertNotIn("auto_detect_interface", cfg["route"])
+        self.assertNotIn("sniff", cfg["inbounds"][0])
+        self.assertNotIn("sniff_override_destination", cfg["inbounds"][0])
+        self.assertFalse(any(item.get("tag") == "dns-out" for item in cfg["outbounds"]))
+        self.assertFalse(any("geoip" in rule or "geosite" in rule for rule in cfg["route"]["rules"]))
 
     def test_build_singbox_config_adds_https_proxy_inbound(self) -> None:
         updates = {

@@ -1,6 +1,6 @@
 services:
   proxy-bridge:
-    image: ${SINGBOX_IMAGE:-ghcr.io/sagernet/sing-box:latest}
+    image: ${SINGBOX_IMAGE:-ghcr.io/sagernet/sing-box:1.13.11}
     container_name: nethub-core
     restart: always
     volumes:

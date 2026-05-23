@@ -54,6 +54,8 @@ def uniquify_tag(base: str, used: dict[str, int]) -> str:
 
 def build_vless_transport(query: dict) -> dict:
     t = _first(query, "type", "grpc").lower()
+    if t == "tcp":
+        return {}
     if t == "grpc":
         return {"type": "grpc", "service_name": _first(query, "serviceName", "")}
     if t == "ws":
@@ -62,8 +64,6 @@ def build_vless_transport(query: dict) -> dict:
         if host:
             tr["headers"] = {"Host": host}
         return tr
-    if t == "tcp":
-        return {"type": "tcp"}
     if t in ("httpupgrade", "http"):
         return {
             "type": "httpupgrade",
@@ -105,22 +105,27 @@ def parse_vless(parsed: urllib.parse.ParseResult, query: dict, tag: str) -> dict
         "server": parsed.hostname,
         "server_port": parsed.port,
         "uuid": urllib.parse.unquote(parsed.username) if parsed.username else "",
-        "transport": build_vless_transport(query),
     }
+    transport = build_vless_transport(query)
+    if transport:
+        node["transport"] = transport
     if tls_enabled:
-        node["tls"] = {
+        tls: dict = {
             "enabled": True,
             "server_name": _first(query, "sni", parsed.hostname or ""),
-            "reality": {
-                "enabled": bool(_first(query, "pbk", "")),
-                "public_key": _first(query, "pbk", ""),
-                "short_id": _first(query, "sid", ""),
-            },
             "utls": {
                 "enabled": True,
                 "fingerprint": _first(query, "fp", "chrome"),
             },
         }
+        public_key = _first(query, "pbk", "")
+        if public_key:
+            tls["reality"] = {
+                "enabled": True,
+                "public_key": public_key,
+                "short_id": _first(query, "sid", ""),
+            }
+        node["tls"] = tls
     return node
 
 
@@ -479,14 +484,12 @@ def build_singbox_config(urls: list[str], route_mode: str = "bypass_cn") -> dict
         },
     )
     outbounds.append({"type": "direct", "tag": "direct"})
-    outbounds.append({"type": "dns", "tag": "dns-out"})
     outbounds.append({"type": "block", "tag": "block"})
 
     # 路由规则预设
     rules = []
     
     # 基础 DNS 规则
-    rules.append({"protocol": "dns", "outbound": "dns-out"})
     
     if route_mode == "bypass_cn":
         # 绕过大陆模式
@@ -494,14 +497,11 @@ def build_singbox_config(urls: list[str], route_mode: str = "bypass_cn") -> dict
             {"clash_mode": "Direct", "outbound": "direct"},
             {"clash_mode": "Global", "outbound": _SELECTOR_TAG},
             {"domain_suffix": [".cn"], "outbound": "direct"},
-            {"geoip": ["cn", "private"], "outbound": "direct"},
-            {"geosite": ["cn"], "outbound": "direct"},
         ])
     elif route_mode == "rule":
         # 规则分流模式 (基础版)
         rules.extend([
-            {"geosite": ["category-ads-all"], "outbound": "block"},
-            {"geoip": ["private"], "outbound": "direct"},
+            {"domain_suffix": [".cn"], "outbound": "direct"},
         ])
     elif route_mode == "direct":
         # 全局直连模式
@@ -516,7 +516,6 @@ def build_singbox_config(urls: list[str], route_mode: str = "bypass_cn") -> dict
         tag="http-in",
         listen=os.environ.get("SINGBOX_HTTP_LISTEN", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.environ.get("SINGBOX_HTTP_PORT", "2080")),
-        sniff=True,
     )
     inbounds = [http_inbound]
     https_inbound = _build_https_proxy_inbound_if_enabled()
@@ -528,24 +527,11 @@ def build_singbox_config(urls: list[str], route_mode: str = "bypass_cn") -> dict
             "level": os.environ.get("SINGBOX_LOG_LEVEL", "info").strip() or "info",
             "timestamp": True,
         },
-        "dns": {
-            "servers": [
-                {"tag": "dns-remote", "type": "https", "server": "8.8.8.8", "dial": {"detour": _SELECTOR_TAG}},
-                {"tag": "dns-local", "type": "udp", "server": "223.5.5.5", "dial": {"detour": "direct"}},
-                {"tag": "dns-block", "type": "rcode", "rcode": "success"}
-            ],
-            "rules": [
-                {"geosite": ["cn"], "server": "dns-local"},
-                {"geosite": ["category-ads-all"], "server": "dns-block"}
-            ],
-            "final": "dns-remote"
-        },
         "inbounds": inbounds,
         "outbounds": outbounds,
         "route": {
             "rules": rules,
             "final": "direct" if route_mode == "direct" else _SELECTOR_TAG,
-            "auto_detect_interface": True
         },
     }
 
@@ -599,7 +585,6 @@ def _build_https_proxy_inbound_if_enabled() -> dict | None:
         tag=os.environ.get("SINGBOX_HTTPS_PROXY_TAG", "https-in").strip() or "https-in",
         listen=os.environ.get("SINGBOX_HTTPS_PROXY_LISTEN", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.environ.get("SINGBOX_HTTPS_PROXY_PORT", "2443")),
-        sniff=True,
     )
     tls: dict = {
         "enabled": True,
