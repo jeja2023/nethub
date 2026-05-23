@@ -625,10 +625,10 @@ def write_singbox_config(config: dict, path: Path) -> None:
     strip_clash_embedded_web_ui(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    # 使用系统临时目录以避开容器内 /app 目录（属于 root 用户）无权限写临时文件的问题
     with tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",
-        dir=path.parent,
         prefix=f".{path.name}.",
         suffix=".tmp",
         delete=False,
