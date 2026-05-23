@@ -680,14 +680,15 @@ def parse_urls_text(text: str) -> list[str]:
     import base64
     out: list[str] = []
     
-    # 尝试检测整块文本是否为 Base64 密文（许多订阅源直接返回全段 base64）
+    # 尝试检测整块文本是否为 Base64 密文（许多订阅源直接返回全段 base64，有些是 url safe base64）
     stripped = "".join(text.split()).strip()
-    if len(stripped) > 20 and re.match(r"^[A-Za-z0-9+/=]+$", stripped):
+    if len(stripped) > 20 and re.match(r"^[A-Za-z0-9+/=\-_]+$", stripped):
         try:
-            missing_padding = len(stripped) % 4
+            standardized = stripped.replace("-", "+").replace("_", "/")
+            missing_padding = len(standardized) % 4
             if missing_padding:
-                stripped += "=" * (4 - missing_padding)
-            decoded_text = base64.b64decode(stripped.encode("utf-8")).decode("utf-8", errors="ignore")
+                standardized += "=" * (4 - missing_padding)
+            decoded_text = base64.b64decode(standardized.encode("utf-8")).decode("utf-8", errors="ignore")
             # 校验解码后是否含有主流代理链接标志，若含有则递归深度解析
             if any(p in decoded_text for p in ("vmess://", "vless://", "trojan://", "ss://", "shadowsocks://", "hysteria2://", "tuic://")):
                 return parse_urls_text(decoded_text)
