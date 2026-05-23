@@ -1810,7 +1810,8 @@
                 body: JSON.stringify({
                   vault_name: vaultName,
                   urls_text: nextUrls.join("\n"),
-                  vault_password: password
+                  vault_password: password,
+                  mode: "replace"
                 }),
                 loading: "正在同步更改...",
               });
@@ -2498,6 +2499,7 @@
         vault_password: pw,
         urls_text: $("vault-urls").value,
         vault_name: vaultName,
+        mode: "append",
       };
       try {
         const r = await api("/api/vault/import", {

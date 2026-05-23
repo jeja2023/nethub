@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -58,7 +59,18 @@ class NodeHealthStore:
     def _write(self, data: dict[str, list[dict[str, Any]]]) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                tmp.write(payload)
+                tmp_path = Path(tmp.name)
+            tmp_path.replace(self.path)
         except OSError:
             return
 

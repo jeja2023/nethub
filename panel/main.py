@@ -319,6 +319,19 @@ def _update_vault_record(name: str, **changes) -> None:
         _write_vault_index(idx)
 
 
+def _ensure_vault_record(name: str, **defaults) -> None:
+    idx = _read_vault_index()
+    vaults = idx.get("vaults") or []
+    for v in vaults:
+        if isinstance(v, dict) and v.get("name") == name:
+            return
+    record = {"name": name, "enabled": True, "node_count": 0}
+    record.update(defaults)
+    vaults.append(record)
+    idx["vaults"] = vaults
+    _write_vault_index(idx)
+
+
 def _update_vault_node_count(name: str, count: int) -> None:
     _update_vault_record(name, node_count=count)
 
@@ -375,8 +388,17 @@ def _import_vault_urls(
     source_url: str = "",
     source_kind: str = "",
     clash_secret: str | None = None,
+    replace: bool = False,
 ) -> tuple[int, int, int]:
-    unique_urls, duplicate_count = dedupe_urls(urls)
+    vault_path = _vault_path(vault_name)
+    current_urls: list[str] = []
+    if vault_path.is_file():
+        try:
+            current_urls = decrypt_vault_file(vault_path, vault_password)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="密码错误，无法更新该节点库") from e
+    merged_urls = urls if replace else [*current_urls, *urls]
+    unique_urls, duplicate_count = dedupe_urls(merged_urls)
     if not unique_urls:
         raise HTTPException(status_code=400, detail="未解析到任何有效节点")
     vault_path = _vault_path(vault_name)
@@ -384,6 +406,7 @@ def _import_vault_urls(
         encrypt_vault_file(unique_urls, vault_password, vault_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入加密库失败: {e}") from e
+    _ensure_vault_record(vault_name)
     total = _rebuild_config_from_vaults(vault_password, clash_secret)
     _store_vault_import_metadata(
         vault_name,
@@ -833,6 +856,7 @@ async def _refresh_subscription_vaults_once(vault_password: str, clash_secret: s
                 source_url=str(v["source_url"]),
                 source_kind="subscription",
                 clash_secret=clash_secret,
+                replace=True,
             )
             refreshed += 1
         except Exception as e:
@@ -2261,6 +2285,7 @@ class VaultImportBody(BaseModel):
     urls_text: str = Field(..., min_length=1, max_length=1_000_000)
     clash_secret: str | None = Field(None, max_length=512)
     vault_name: str | None = Field(None, max_length=64)
+    mode: str = Field("append", pattern="^(append|replace)$")
 
 
 class VaultPreviewBody(BaseModel):
@@ -2476,6 +2501,7 @@ async def api_vault_import(body: VaultImportBody, request: Request):
         urls,
         source_kind="manual",
         clash_secret=body.clash_secret,
+        replace=body.mode == "replace",
     )
     panel_audit(
         f"导入到节点库 {vault_name}：{unique_count} 条（去重 {duplicate_count} 条）；已合并生成配置（合计 {total} 条）",
@@ -2498,7 +2524,7 @@ async def api_vault_preview(body: VaultPreviewBody, request: Request):
     login_required(request)
     verify_csrf(request)
     vault_name = _vault_name_norm(body.vault_name or "default")
-    new_urls, duplicate_count = dedupe_urls(parse_urls_text(body.urls_text))
+    new_urls, input_duplicate_count = dedupe_urls(parse_urls_text(body.urls_text))
     old_urls: list[str] = []
     path = _vault_path(vault_name)
     if path.is_file():
@@ -2507,20 +2533,20 @@ async def api_vault_preview(body: VaultPreviewBody, request: Request):
         except Exception:
             return {"ok": False, "detail": "密码错误，无法预览该节点库"}
     old_set = set(old_urls)
-    new_set = set(new_urls)
+    combined_urls, total_duplicate_count = dedupe_urls([*old_urls, *new_urls])
     added = [u for u in new_urls if u not in old_set]
-    removed = [u for u in old_urls if u not in new_set]
     unchanged = [u for u in new_urls if u in old_set]
     return {
         "ok": True,
-        "new_count": len(new_urls),
+        "new_count": len(combined_urls),
         "old_count": len(old_urls),
         "added_count": len(added),
-        "removed_count": len(removed),
+        "removed_count": 0,
         "unchanged_count": len(unchanged),
-        "duplicate_count": duplicate_count,
+        "duplicate_count": total_duplicate_count,
+        "input_duplicate_count": input_duplicate_count,
         "added_preview": added[:5],
-        "removed_preview": removed[:5],
+        "removed_preview": [],
     }
 
 
@@ -2580,6 +2606,7 @@ async def api_vault_import_subscription(body: VaultSubscriptionBody, request: Re
         source_url=subscription_url,
         source_kind="subscription",
         clash_secret=body.clash_secret,
+        replace=True,
     )
     panel_audit(
         f"订阅导入到节点库 {vault_name}：{unique_count} 条（去重 {duplicate_count} 条）；已合并生成配置（合计 {total} 条）",
@@ -2616,6 +2643,7 @@ async def api_vault_refresh(body: VaultRefreshBody, request: Request):
         source_url=source_url,
         source_kind="subscription",
         clash_secret=body.clash_secret,
+        replace=True,
     )
     panel_audit(
         f"刷新节点库 {vault_name}：{unique_count} 条（去重 {duplicate_count} 条）；已重新生成配置（合计 {total} 条）",

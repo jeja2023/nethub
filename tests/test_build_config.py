@@ -1,11 +1,18 @@
 import unittest
+import json
 import os
 import tempfile
 from pathlib import Path
 
 import yaml
 
-from core.build_config import build_singbox_config, dedupe_urls, generate_clash_yaml, parse_urls_text
+from core.build_config import (
+    build_singbox_config,
+    dedupe_urls,
+    generate_clash_yaml,
+    parse_urls_text,
+    write_singbox_config,
+)
 
 
 class BuildConfigTests(unittest.TestCase):
@@ -111,6 +118,13 @@ class BuildConfigTests(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+    def test_write_singbox_config_creates_parent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "nested" / "config.json"
+            write_singbox_config({"log": {"level": "info"}}, out)
+
+            self.assertEqual(json.loads(out.read_text(encoding="utf-8")), {"log": {"level": "info"}})
 
 
 if __name__ == "__main__":

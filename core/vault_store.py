@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -38,7 +39,17 @@ def encrypt_vault_file(urls: list[str], password: str, dest: Path) -> None:
         "cipher_b64": base64.b64encode(token).decode("ascii"),
     }
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(blob, indent=0), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=dest.parent,
+        prefix=f".{dest.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        tmp.write(json.dumps(blob, indent=0))
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(dest)
 
 
 def decrypt_vault_file(src: Path, password: str) -> list[str]:

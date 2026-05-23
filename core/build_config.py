@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import urllib.parse
 from base64 import urlsafe_b64decode
 from pathlib import Path
@@ -613,7 +614,19 @@ def strip_clash_embedded_web_ui(config: dict) -> bool:
 
 def write_singbox_config(config: dict, path: Path) -> None:
     strip_clash_embedded_web_ui(config)
-    path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        tmp.write(payload)
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(path)
 
 
 def sanitize_config_file_if_needed(path: Path) -> bool:
