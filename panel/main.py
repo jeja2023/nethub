@@ -427,6 +427,27 @@ def _read_config_json_file(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _config_clash_api_secret(config: dict[str, Any] | None) -> str:
+    if not isinstance(config, dict):
+        return ""
+    exp = config.get("experimental")
+    if not isinstance(exp, dict):
+        return ""
+    clash_api = exp.get("clash_api")
+    if not isinstance(clash_api, dict):
+        return ""
+    return str(clash_api.get("secret") or "").strip()
+
+
+def _mask_secret(secret: str) -> str:
+    value = (secret or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
 def _configured_selector_node_count(config: dict[str, Any] | None) -> int:
     if not isinstance(config, dict):
         return 0
@@ -522,10 +543,35 @@ def _ensure_config_auth_matches_env() -> bool:
     return changed
 
 
+def _ensure_config_clash_secret_matches_env() -> str:
+    """Return the previous config secret if config.json was patched to match CLASH_API_SECRET."""
+    env_secret = os.environ.get("CLASH_API_SECRET", "").strip()
+    if not env_secret:
+        return ""
+    cfg = _read_config_json_file(CONFIG_FILE)
+    if not isinstance(cfg, dict):
+        return ""
+    exp = cfg.get("experimental")
+    if not isinstance(exp, dict):
+        exp = {}
+        cfg["experimental"] = exp
+    clash_api = exp.get("clash_api")
+    if not isinstance(clash_api, dict):
+        return ""
+    previous_secret = str(clash_api.get("secret") or "").strip()
+    if previous_secret == env_secret:
+        return ""
+    clash_api["secret"] = env_secret
+    write_singbox_config(cfg, CONFIG_FILE)
+    return previous_secret
+
+
 def _secret_candidates(*values: str | None) -> list[str]:
     out: list[str] = []
     for value in values:
         secret = (value or "").strip()
+        if not secret:
+            continue
         if secret not in out:
             out.append(secret)
     return out or [""]
@@ -557,9 +603,14 @@ def _sync_clash_api_request(
     return None
 
 
-def _reload_singbox_config_sync(*, current_secret: str | None, next_secret: str | None) -> bool:
+def _reload_singbox_config_sync(
+    *,
+    current_secret: str | None,
+    next_secret: str | None,
+    extra_secrets: list[str | None] | None = None,
+) -> bool:
     """通知 sing-box 重载配置，传入内核侧配置文件路径以确保 inbound 等完整重建。"""
-    candidates = _secret_candidates(current_secret, next_secret)
+    candidates = _secret_candidates(current_secret, next_secret, *(extra_secrets or []))
     # 首选：带 path 参数重载（sing-box 会从该路径重新读取并完整重建所有组件）
     response = _sync_clash_api_request(
         "PUT",
@@ -633,6 +684,8 @@ def _rebuild_config_from_vaults(vault_password: str, clash_secret: str | None = 
     secret_changed = bool(clash_secret and clash_secret.strip())
     if clash_secret and clash_secret.strip():
         os.environ["CLASH_API_SECRET"] = next_secret
+    previous_cfg = _read_config_json_file(CONFIG_FILE)
+    previous_config_secret = _config_clash_api_secret(previous_cfg)
     try:
         cfg = build_singbox_config(all_urls, route_mode=route_mode)
     except (NodeBuildError, ValueError) as e:
@@ -645,14 +698,17 @@ def _rebuild_config_from_vaults(vault_password: str, clash_secret: str | None = 
                 os.environ.pop("CLASH_API_SECRET", None)
 
     try:
-        previous_cfg = _read_config_json_file(CONFIG_FILE)
         close_existing_connections = _proxy_auth_change_requires_connection_close(previous_cfg, cfg)
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         write_singbox_config(cfg, CONFIG_FILE)
         marker = DATA_DIR / ".config_revision"
         marker.write_text(str(CONFIG_FILE.stat().st_mtime_ns), encoding="utf-8")
 
-        reloaded = _reload_singbox_config_sync(current_secret=old_secret, next_secret=next_secret)
+        reloaded = _reload_singbox_config_sync(
+            current_secret=old_secret,
+            next_secret=next_secret,
+            extra_secrets=[previous_config_secret],
+        )
         if not reloaded:
             raise ConfigReloadError(
                 "config.json 已写入，但 sing-box 内核未能热重载新配置。请检查 Clash API 状态，或重启容器。"
@@ -950,9 +1006,20 @@ async def _enforce_proxy_auth_connections_on_startup() -> None:
     try:
         # 确保磁盘上的 config.json 包含鉴权配置（可能是在设置鉴权前生成的旧配置）
         config_patched = _ensure_config_auth_matches_env()
+        previous_config_secret = _ensure_config_clash_secret_matches_env()
+        if previous_config_secret:
+            config_patched = True
+            logger.info(
+                "检测到 config.json Clash API 密钥与环境变量不一致，已同步为当前环境变量（旧值 %s）",
+                _mask_secret(previous_config_secret),
+            )
         if config_patched:
             logger.info("检测到 config.json 缺少鉴权配置，已根据环境变量补写 users 字段")
-            _reload_singbox_config_sync(current_secret=secret, next_secret=secret)
+            _reload_singbox_config_sync(
+                current_secret=secret,
+                next_secret=secret,
+                extra_secrets=[previous_config_secret],
+            )
             await asyncio.sleep(1.0)
 
         if not _http_proxy_auth_required():
@@ -1055,10 +1122,15 @@ async def _unhandled_exception(request: Request, exc: Exception):
 
 
 def clash_headers() -> dict[str, str]:
-    secret = os.environ.get("CLASH_API_SECRET", "").strip() or CLASH_SECRET
+    secret = _clash_secret_candidates()[0]
     if not secret:
         return {}
     return {"Authorization": f"Bearer {secret}"}
+
+
+def _clash_secret_candidates() -> list[str]:
+    disk_secret = _config_clash_api_secret(_read_config_json_file(CONFIG_FILE))
+    return _secret_candidates(disk_secret, os.environ.get("CLASH_API_SECRET", "").strip(), CLASH_SECRET)
 
 
 def _safe_str_eq(a: str, b: str) -> bool:
@@ -1072,6 +1144,17 @@ def _safe_str_eq(a: str, b: str) -> bool:
 
 async def clash_request(method: str, path: str, **kwargs) -> httpx.Response:
     url = f"{CLASH_BASE}{path}"
+    last_response: httpx.Response | None = None
+    candidates = _clash_secret_candidates()
+    for idx, secret in enumerate(candidates):
+        headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+        response = await app.state.http_client.request(method, url, headers=headers, **kwargs)
+        if response.status_code in (401, 403) and idx + 1 < len(candidates):
+            last_response = response
+            continue
+        return response
+    if last_response is not None:
+        return last_response
     return await app.state.http_client.request(method, url, headers=clash_headers(), **kwargs)
 
 
@@ -1217,6 +1300,70 @@ async def api_health(request: Request):
         )
 
 
+@app.get("/api/runtime-diagnostics")
+async def api_runtime_diagnostics(request: Request):
+    login_required(request)
+    disk_config = _read_config_json_file(CONFIG_FILE)
+    disk_secret = _config_clash_api_secret(disk_config)
+    env_secret = os.environ.get("CLASH_API_SECRET", "").strip()
+    selector = None
+    proxies_status = None
+    proxies_error = ""
+    configs_status = None
+    configs_body: Any = None
+    configs_error = ""
+
+    try:
+        r = await clash_request("GET", "/proxies")
+        if r.status_code == 404:
+            r = await clash_request("GET", "/v1/proxies")
+        proxies_status = r.status_code
+        if r.is_success:
+            data = r.json()
+            proxies = data.get("proxies") or {}
+            selector_tag, sel, selector_warning = _find_selector_proxy(proxies)
+            selector = {
+                "tag": selector_tag,
+                "warning": selector_warning,
+                "all": sel.get("all") if isinstance(sel, dict) else None,
+                "now": sel.get("now") if isinstance(sel, dict) else None,
+            }
+        else:
+            proxies_error = r.text[:500]
+    except Exception as e:
+        proxies_error = str(e)
+
+    try:
+        r = await clash_request("GET", "/configs")
+        configs_status = r.status_code
+        if r.is_success:
+            try:
+                configs_body = r.json()
+            except json.JSONDecodeError:
+                configs_body = r.text[:1000]
+        else:
+            configs_error = r.text[:500]
+    except Exception as e:
+        configs_error = str(e)
+
+    return {
+        "clash_base": CLASH_BASE,
+        "config_file": str(CONFIG_FILE),
+        "singbox_config_path": _SINGBOX_CONFIG_PATH,
+        "disk_selector_count": _configured_selector_node_count(disk_config),
+        "disk_outbound_count": len(disk_config.get("outbounds") or []) if isinstance(disk_config, dict) else 0,
+        "disk_secret_hint": _mask_secret(disk_secret),
+        "env_secret_hint": _mask_secret(env_secret),
+        "secret_mismatch": bool(disk_secret and env_secret and disk_secret != env_secret),
+        "proxies_status": proxies_status,
+        "proxies_error": proxies_error,
+        "selector": selector,
+        "configs_status": configs_status,
+        "configs_error": configs_error,
+        "configs": configs_body,
+    }
+
+
 @app.get("/api/gateway-summary")
 async def api_gateway_summary(request: Request):
     login_required(request)
@@ -1323,9 +1470,25 @@ async def api_selector_summary(request: Request):
 
     disk_config = _read_config_json_file(CONFIG_FILE)
     disk_selector_count = _configured_selector_node_count(disk_config)
+    disk_config_secret = _config_clash_api_secret(disk_config)
+    env_secret = os.environ.get("CLASH_API_SECRET", "").strip()
+    reload_attempted = False
+    reload_ok = None
+    previous_config_secret = ""
+    if disk_config_secret and env_secret and disk_config_secret != env_secret:
+        previous_config_secret = _ensure_config_clash_secret_matches_env()
+        if previous_config_secret:
+            disk_config = _read_config_json_file(CONFIG_FILE)
+            disk_config_secret = _config_clash_api_secret(disk_config)
     runtime_nodes = sel.get("all") if isinstance(sel, dict) else []
     if runtime_nodes == ["direct"] and disk_selector_count > 0:
-        if _reload_singbox_config_sync(current_secret=os.environ.get("CLASH_API_SECRET"), next_secret=os.environ.get("CLASH_API_SECRET")):
+        reload_attempted = True
+        reload_ok = _reload_singbox_config_sync(
+            current_secret=env_secret,
+            next_secret=env_secret,
+            extra_secrets=[previous_config_secret, disk_config_secret],
+        )
+        if reload_ok:
             r = await clash_request("GET", "/proxies")
             if r.status_code == 404:
                 r = await clash_request("GET", "/v1/proxies")
@@ -1506,6 +1669,8 @@ async def api_selector_summary(request: Request):
             "节点库中已有节点，但当前 sing-box 内核的 selector 仍只包含 direct。"
             "通常是配置热重载失败或容器仍在使用旧 config，请重启 Docker 服务或检查 Clash API /configs。"
         )
+        if disk_config_secret and env_secret and disk_config_secret != env_secret:
+            selector_warning += " 已检测到 config.json 内的 Clash API 密钥与当前环境变量不一致，面板已尝试用旧密钥热重载。"
 
     for node in filtered_nodes:
         proxy_info = proxies.get(node)
@@ -1524,6 +1689,18 @@ async def api_selector_summary(request: Request):
         "types": node_types,
         "node_kinds": node_kinds,
         "health": HEALTH_STORE.snapshot(),
+        "diagnostics": {
+            "clash_base": CLASH_BASE,
+            "config_file": str(CONFIG_FILE),
+            "singbox_config_path": _SINGBOX_CONFIG_PATH,
+            "disk_selector_count": disk_selector_count,
+            "runtime_selector_count": len(runtime_nodes) if isinstance(runtime_nodes, list) else 0,
+            "reload_attempted": reload_attempted,
+            "reload_ok": reload_ok,
+            "config_secret_hint": _mask_secret(disk_config_secret),
+            "env_secret_hint": _mask_secret(env_secret),
+            "secret_mismatch": bool(disk_config_secret and env_secret and disk_config_secret != env_secret),
+        },
     }
 
 

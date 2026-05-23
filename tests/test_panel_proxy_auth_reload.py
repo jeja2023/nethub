@@ -41,6 +41,23 @@ class ProxyAuthReloadTests(unittest.TestCase):
         self.assertEqual(args[:2], ("PUT", "/configs?force=true"))
         self.assertEqual(kwargs["json_body"], {"path": panel_main._SINGBOX_CONFIG_PATH})
 
+    def test_reload_includes_extra_secrets(self) -> None:
+        response = MagicMock()
+        response.is_success = True
+
+        with patch.object(panel_main, "_sync_clash_api_request", return_value=response) as req:
+            self.assertTrue(
+                panel_main._reload_singbox_config_sync(
+                    current_secret="old",
+                    next_secret="new",
+                    extra_secrets=["disk-secret"],
+                )
+            )
+
+        req.assert_called_once()
+        _, kwargs = req.call_args
+        self.assertEqual(kwargs["secret_candidates"], ["old", "new", "disk-secret"])
+
     def test_reload_fallback_sends_payload_as_string(self) -> None:
         first = MagicMock()
         first.is_success = False
@@ -66,9 +83,14 @@ class ProxyAuthReloadTests(unittest.TestCase):
 
     def test_clash_headers_uses_runtime_secret_from_environment(self) -> None:
         old = os.environ.get("CLASH_API_SECRET")
+        old_cfg = panel_main.CONFIG_FILE
         os.environ["CLASH_API_SECRET"] = "runtime-secret"
         try:
-            self.assertEqual(panel_main.clash_headers(), {"Authorization": "Bearer runtime-secret"})
+            with tempfile.TemporaryDirectory() as td:
+                cfg = Path(td) / "config.json"
+                cfg.write_text("{}", encoding="utf-8")
+                with patch.object(panel_main, "CONFIG_FILE", cfg):
+                    self.assertEqual(panel_main.clash_headers(), {"Authorization": "Bearer runtime-secret"})
         finally:
             if old is None:
                 os.environ.pop("CLASH_API_SECRET", None)
@@ -98,6 +120,27 @@ class ProxyAuthReloadTests(unittest.TestCase):
         new = config_with_users()
 
         self.assertTrue(panel_main._proxy_auth_change_requires_connection_close(old, new))
+
+    def test_sync_config_clash_secret_matches_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "config.json"
+            cfg.write_text(
+                '{"experimental":{"clash_api":{"secret":"old-secret","external_controller":"0.0.0.0:9020"}}}',
+                encoding="utf-8",
+            )
+            old_env = os.environ.get("CLASH_API_SECRET")
+            os.environ["CLASH_API_SECRET"] = "new-secret"
+            try:
+                with patch.object(panel_main, "CONFIG_FILE", cfg):
+                    previous = panel_main._ensure_config_clash_secret_matches_env()
+            finally:
+                if old_env is None:
+                    os.environ.pop("CLASH_API_SECRET", None)
+                else:
+                    os.environ["CLASH_API_SECRET"] = old_env
+
+            self.assertEqual(previous, "old-secret")
+            self.assertIn('"secret": "new-secret"', cfg.read_text(encoding="utf-8"))
 
 
 class ProxyAuthStartupCleanupTests(unittest.IsolatedAsyncioTestCase):

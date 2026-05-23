@@ -1122,7 +1122,20 @@
     const now = data.now || "";
     selectorTag = data.tag || selectorTag;
     const hint = $("node-test-hint");
-    if (hint && data.warning) hint.textContent = data.warning;
+    if (hint) {
+      const lines = [];
+      if (data.warning) lines.push(data.warning);
+      if (data.diagnostics) {
+        const d = data.diagnostics;
+        const bits = [];
+        if (d.secret_mismatch) bits.push(`密钥不一致 ${d.env_secret_hint} / ${d.config_secret_hint}`);
+        bits.push(`磁盘 selector ${d.disk_selector_count}`);
+        bits.push(`运行时 selector ${d.runtime_selector_count}`);
+        if (d.reload_attempted) bits.push(d.reload_ok ? "已尝试重载成功" : "已尝试重载失败");
+        lines.push(`诊断：${bits.join(" · ")}`);
+      }
+      hint.textContent = lines.join("  ");
+    }
     
     let filtered = all.slice();
     const q = ($("node-search") ? $("node-search").value : "").trim().toLowerCase();
