@@ -1119,6 +1119,9 @@
     currentSelectorData = data;
     const all = data.all || [];
     const now = data.now || "";
+    selectorTag = data.tag || selectorTag;
+    const hint = $("node-test-hint");
+    if (hint && data.warning) hint.textContent = data.warning;
     
     let filtered = all.slice();
     const q = ($("node-search") ? $("node-search").value : "").trim().toLowerCase();
@@ -1142,7 +1145,7 @@
     lastNodeNames = filtered; 
     const wrap = $("node-cards");
     wrap.innerHTML = "";
-    $("selector-tag").textContent = data.tag || selectorTag;
+    $("selector-tag").textContent = selectorTag;
 
     const nowTs = Date.now();
 

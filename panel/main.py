@@ -1036,6 +1036,36 @@ async def clash_request(method: str, path: str, **kwargs) -> httpx.Response:
     return await app.state.http_client.request(method, url, headers=clash_headers(), **kwargs)
 
 
+def _is_selector_proxy(proxy: object) -> bool:
+    return isinstance(proxy, dict) and isinstance(proxy.get("all"), list)
+
+
+def _find_selector_proxy(proxies: dict) -> tuple[str, dict | None, str]:
+    configured = proxies.get(SELECTOR_TAG)
+    if _is_selector_proxy(configured):
+        return SELECTOR_TAG, configured, ""
+
+    for tag, proxy in proxies.items():
+        proxy_type = str((proxy or {}).get("type") or "").strip().lower() if isinstance(proxy, dict) else ""
+        if isinstance(tag, str) and _is_selector_proxy(proxy) and proxy_type in ("selector", "select"):
+            return (
+                tag,
+                proxy,
+                f"配置的 selector 分组 {SELECTOR_TAG} 未在内核中找到，已自动使用 {tag}。",
+            )
+
+    for tag, proxy in proxies.items():
+        if isinstance(tag, str) and _is_selector_proxy(proxy):
+            return (
+                tag,
+                proxy,
+                f"配置的 selector 分组 {SELECTOR_TAG} 未在内核中找到，已自动使用 {tag}。",
+            )
+
+    sample = ", ".join(list(proxies.keys())[:15])
+    return SELECTOR_TAG, None, f"未找到有效 selector 分组 {SELECTOR_TAG}。已有 keys: {sample or '（空）'}"
+
+
 def login_required(request: Request) -> None:
     if not PANEL_AUTH_CONFIGURED:
         raise HTTPException(
@@ -1248,13 +1278,9 @@ async def api_selector_summary(request: Request):
         )
 
     proxies = data.get("proxies") or {}
-    sel = proxies.get(SELECTOR_TAG)
-    if not isinstance(sel, dict):
-        sample = ", ".join(list(proxies.keys())[:15])
-        raise HTTPException(
-            status_code=404,
-            detail=f"未找到有效分组 {SELECTOR_TAG}。已有 keys: {sample or '（空）'}",
-        )
+    selector_tag, sel, selector_warning = _find_selector_proxy(proxies)
+    if sel is None:
+        raise HTTPException(status_code=404, detail=selector_warning)
 
     all_nodes = sel.get("all")
     if not isinstance(all_nodes, list):
@@ -1427,7 +1453,9 @@ async def api_selector_summary(request: Request):
             node_kinds[node] = classify_node_kind(node)
 
     return {
-        "tag": SELECTOR_TAG,
+        "tag": selector_tag,
+        "configured_tag": SELECTOR_TAG,
+        "warning": selector_warning,
         "now": str(sel.get("now") or ""),
         "all": filtered_nodes,
         "types": node_types,
@@ -2729,7 +2757,18 @@ async def api_select_group(group: str, body: SelectBody, request: Request):
     login_required(request)
     verify_csrf(request)
     if group != SELECTOR_TAG:
-        raise HTTPException(status_code=400, detail="仅允许切换配置的 selector 分组")
+        try:
+            r = await clash_request("GET", "/proxies")
+            if r.status_code == 404:
+                r = await clash_request("GET", "/v1/proxies")
+            if r.is_success:
+                selector_tag, sel, _ = _find_selector_proxy((r.json() or {}).get("proxies") or {})
+                if sel is None or group != selector_tag:
+                    raise HTTPException(status_code=400, detail="仅允许切换当前 selector 分组")
+            else:
+                raise HTTPException(status_code=400, detail="仅允许切换配置的 selector 分组")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="仅允许切换配置的 selector 分组")
     payload = {"name": body.name}
     enc = quote(group, safe="")
     for path in (f"/proxies/{enc}", f"/v1/proxies/{enc}"):
