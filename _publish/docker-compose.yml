@@ -1,0 +1,81 @@
+services:
+  proxy-bridge:
+    image: ${SINGBOX_IMAGE:-ghcr.io/sagernet/sing-box:latest}
+    container_name: nethub-core
+    restart: always
+    volumes:
+      - ./config.json:/etc/sing-box/config.json
+      - ${SINGBOX_TLS_CERT_DIR:-./certs}:/certs:ro
+    ports:
+      # 公网 HTTP 代理端口 -> 容器内 sing-box 运行的 HTTP 代理端口。
+      - "${SINGBOX_HTTP_PORT:-2080}:2080"
+      # 可选的公网 HTTPS 正向代理端口 -> 容器内 TLS 代理端口。
+      - "${SINGBOX_HTTPS_PROXY_PUBLIC_PORT:-2443}:2443"
+    environment:
+      # 兼容旧版 DNS 服务器配置格式（sing-box 1.14+ 已废弃旧格式）
+      ENABLE_DEPRECATED_LEGACY_DNS_SERVERS: "true"
+    command: run -c /etc/sing-box/config.json
+    healthcheck:
+      test:
+        - CMD
+        - sing-box
+        - check
+        - -c
+        - /etc/sing-box/config.json
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 35s
+    stop_grace_period: 15s
+
+  panel:
+    profiles: ["panel"]
+    build:
+      context: .
+      dockerfile: panel/Dockerfile
+    container_name: nethub-panel
+    restart: always
+    ports:
+      - "${PANEL_PORT:-8080}:8080"
+    volumes:
+      - ./config.json:/app/config.json
+      - ./data:/app/data
+    environment:
+      PROXY_REPO_ROOT: /app
+      PROXY_CONFIG_PATH: /app/config.json
+      PROXY_DATA_DIR: /app/data
+      PYTHONPATH: /app
+      CLASH_API_URL: http://proxy-bridge:9020
+      CLASH_API_SECRET: ${CLASH_API_SECRET:-}
+      SINGBOX_WITH_PANEL: "1"
+      SINGBOX_CLASH_API: "1"
+      PANEL_ADMIN_USER: ${PANEL_ADMIN_USER:-admin}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD:-}
+      PANEL_SESSION_SECRET: ${PANEL_SESSION_SECRET:-}
+      VAULT_PASSWORD: ${VAULT_PASSWORD:-}
+      PANEL_SUB_REFRESH_INTERVAL_MIN: ${PANEL_SUB_REFRESH_INTERVAL_MIN:-0}
+      SINGBOX_TEMPLATE_PATH: ${SINGBOX_TEMPLATE_PATH:-}
+      SINGBOX_HTTP_PUBLIC_PORT: ${SINGBOX_HTTP_PORT:-2080}
+      SINGBOX_HTTP_USER: ${SINGBOX_HTTP_USER:-}
+      SINGBOX_HTTP_PASS: ${SINGBOX_HTTP_PASS:-}
+      SINGBOX_CONFIG_PATH: /etc/sing-box/config.json
+      SINGBOX_HTTPS_PROXY_ENABLED: ${SINGBOX_HTTPS_PROXY_ENABLED:-0}
+      SINGBOX_HTTPS_PROXY_PUBLIC_PORT: ${SINGBOX_HTTPS_PROXY_PUBLIC_PORT:-2443}
+      SINGBOX_HTTPS_PROXY_PORT: 2443
+      SINGBOX_TLS_CERT_PATH: ${SINGBOX_TLS_CERT_PATH:-}
+      SINGBOX_TLS_KEY_PATH: ${SINGBOX_TLS_KEY_PATH:-}
+      SINGBOX_TLS_SERVER_NAME: ${SINGBOX_TLS_SERVER_NAME:-}
+    depends_on:
+      proxy-bridge:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -sf
+        - http://127.0.0.1:8080/api/live
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 25s
+    stop_grace_period: 10s

@@ -516,8 +516,8 @@ def build_singbox_config(urls: list[str], route_mode: str = "bypass_cn") -> dict
         },
         "dns": {
             "servers": [
-                {"tag": "dns-remote", "type": "https", "server": "8.8.8.8", "detour": _SELECTOR_TAG},
-                {"tag": "dns-local", "type": "udp", "server": "223.5.5.5", "detour": "direct"},
+                {"tag": "dns-remote", "type": "https", "server": "8.8.8.8", "dial": {"detour": _SELECTOR_TAG}},
+                {"tag": "dns-local", "type": "udp", "server": "223.5.5.5", "dial": {"detour": "direct"}},
                 {"tag": "dns-block", "type": "rcode", "rcode": "success"}
             ],
             "rules": [
