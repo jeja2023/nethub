@@ -635,7 +635,14 @@ def write_singbox_config(config: dict, path: Path) -> None:
     ) as tmp:
         tmp.write(payload)
         tmp_path = Path(tmp.name)
-    tmp_path.replace(path)
+    try:
+        content = tmp_path.read_text(encoding="utf-8")
+        path.write_text(content, encoding="utf-8")
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def sanitize_config_file_if_needed(path: Path) -> bool:
