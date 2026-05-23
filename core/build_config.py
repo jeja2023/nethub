@@ -521,7 +521,6 @@ def build_singbox_config(urls: list[str], route_mode: str = "bypass_cn") -> dict
                 {"tag": "dns-block", "address": "rcode://success"}
             ],
             "rules": [
-                {"outbound": "any", "server": "dns-local"},
                 {"geosite": ["cn"], "server": "dns-local"},
                 {"geosite": ["category-ads-all"], "server": "dns-block"}
             ],
