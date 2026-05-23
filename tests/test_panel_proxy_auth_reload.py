@@ -1,8 +1,9 @@
 import sys
 import os
+import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,41 @@ def config_with_users(users=None):
 
 
 class ProxyAuthReloadTests(unittest.TestCase):
+    def test_reload_uses_force_query_and_path_body(self) -> None:
+        response = MagicMock()
+        response.is_success = True
+
+        with patch.object(panel_main, "_sync_clash_api_request", return_value=response) as req:
+            self.assertTrue(panel_main._reload_singbox_config_sync(current_secret="old", next_secret="new"))
+
+        req.assert_called_once()
+        args, kwargs = req.call_args
+        self.assertEqual(args[:2], ("PUT", "/configs?force=true"))
+        self.assertEqual(kwargs["json_body"], {"path": panel_main._SINGBOX_CONFIG_PATH})
+
+    def test_reload_fallback_sends_payload_as_string(self) -> None:
+        first = MagicMock()
+        first.is_success = False
+        first.status_code = 500
+        first.text = "bad"
+        second = MagicMock()
+        second.is_success = True
+
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "config.json"
+            cfg.write_text('{"outbounds":[]}', encoding="utf-8")
+            with (
+                patch.object(panel_main, "CONFIG_FILE", cfg),
+                patch.object(panel_main, "_sync_clash_api_request", side_effect=[first, second]) as req,
+            ):
+                self.assertTrue(panel_main._reload_singbox_config_sync(current_secret="old", next_secret="new"))
+
+        second_call = req.call_args_list[1]
+        self.assertEqual(second_call.args[:2], ("PUT", "/configs?force=true"))
+        payload = second_call.kwargs["json_body"]["payload"]
+        self.assertIsInstance(payload, str)
+        self.assertIn('"outbounds"', payload)
+
     def test_clash_headers_uses_runtime_secret_from_environment(self) -> None:
         old = os.environ.get("CLASH_API_SECRET")
         os.environ["CLASH_API_SECRET"] = "runtime-secret"

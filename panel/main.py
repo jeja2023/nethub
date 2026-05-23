@@ -563,9 +563,9 @@ def _reload_singbox_config_sync(*, current_secret: str | None, next_secret: str 
     # 首选：带 path 参数重载（sing-box 会从该路径重新读取并完整重建所有组件）
     response = _sync_clash_api_request(
         "PUT",
-        "/configs",
+        "/configs?force=true",
         secret_candidates=candidates,
-        json_body={"path": _SINGBOX_CONFIG_PATH, "force": True},
+        json_body={"path": _SINGBOX_CONFIG_PATH},
         timeout=8.0,
     )
     if response is not None and response.is_success:
@@ -575,9 +575,9 @@ def _reload_singbox_config_sync(*, current_secret: str | None, next_secret: str 
         payload = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         response = _sync_clash_api_request(
             "PUT",
-            "/configs",
+            "/configs?force=true",
             secret_candidates=candidates,
-            json_body={"payload": payload, "force": True},
+            json_body={"payload": json.dumps(payload, ensure_ascii=False)},
             timeout=8.0,
         )
         if response is not None and response.is_success:
