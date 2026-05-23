@@ -35,6 +35,7 @@
   let csrfToken = "";
   let connsTimer = null;
   let openModalCount = 0;
+  const TOP_MODAL_Z_INDEX = "3000";
   const trafficHistory = { up: [], down: [] };
   const MAX_TRAFFIC_POINTS = 30;
 
@@ -1380,6 +1381,7 @@
     btnConfirm.addEventListener("click", onOk);
     document.addEventListener("keydown", onKey);
 
+    overlay.style.zIndex = TOP_MODAL_Z_INDEX;
     show(overlay, true);
     btnCancel.focus();
   }
@@ -1451,6 +1453,7 @@
     btnConfirm.addEventListener("click", onOk);
     document.addEventListener("keydown", onKey);
 
+    overlay.style.zIndex = TOP_MODAL_Z_INDEX;
     show(overlay, true);
     const first = fields && fields.length ? inputs[fields[0].id] : btnCancel;
     if (first && first.focus) first.focus();

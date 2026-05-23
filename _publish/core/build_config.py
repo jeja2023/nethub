@@ -97,13 +97,18 @@ def parse_hysteria2(parsed: urllib.parse.ParseResult, query: dict, tag: str) -> 
 
 
 def parse_vless(parsed: urllib.parse.ParseResult, query: dict, tag: str) -> dict:
-    return {
+    security = _first(query, "security", "tls").lower()
+    tls_enabled = security in ("tls", "reality") or bool(_first(query, "pbk", ""))
+    node = {
         "type": "vless",
         "tag": tag,
         "server": parsed.hostname,
         "server_port": parsed.port,
         "uuid": urllib.parse.unquote(parsed.username) if parsed.username else "",
-        "tls": {
+        "transport": build_vless_transport(query),
+    }
+    if tls_enabled:
+        node["tls"] = {
             "enabled": True,
             "server_name": _first(query, "sni", parsed.hostname or ""),
             "reality": {
@@ -115,9 +120,8 @@ def parse_vless(parsed: urllib.parse.ParseResult, query: dict, tag: str) -> dict
                 "enabled": True,
                 "fingerprint": _first(query, "fp", "chrome"),
             },
-        },
-        "transport": build_vless_transport(query),
-    }
+        }
+    return node
 
 
 def parse_tuic(parsed: urllib.parse.ParseResult, query: dict, tag: str) -> dict:

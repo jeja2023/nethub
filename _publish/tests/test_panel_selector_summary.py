@@ -36,5 +36,25 @@ class PanelSelectorSummaryTests(unittest.TestCase):
         self.assertIn("未找到有效 selector 分组", warning)
 
 
+    def test_counts_real_nodes_in_configured_selector(self) -> None:
+        cfg = {
+            "outbounds": [
+                {"type": "selector", "tag": panel_main.SELECTOR_TAG, "outbounds": ["node-a", "direct", "node-b"]},
+                {"type": "direct", "tag": "direct"},
+            ]
+        }
+
+        self.assertEqual(panel_main._configured_selector_node_count(cfg), 2)
+
+    def test_counts_fallback_selector_when_configured_tag_missing(self) -> None:
+        cfg = {
+            "outbounds": [
+                {"type": "selector", "tag": "AUTO", "outbounds": ["node-a", "direct"]},
+            ]
+        }
+
+        self.assertEqual(panel_main._configured_selector_node_count(cfg), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

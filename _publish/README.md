@@ -1,0 +1,117 @@
+# 网枢 NetHub - 高性能代理中转系统
+
+当前版本：`0.0.7`（2026-05-23）
+
+网枢 NetHub 是一款专为现代化网络环境设计的代理中转与管理工具。它能将复杂的加密协议（VLESS, Hysteria2, TUIC, Shadowsocks）桥接转换为标准 HTTP 代理，并提供专业级的 Web 管理界面。
+
+## 🚀 核心特性
+
+*   **全协议支持**：轻松桥接 VLESS (Reality), Hysteria2, TUIC 等主流协议。
+*   **指挥中心看板**：全新的可视化控制面板，支持代理内核实时上下行速率图表、流量统计、内核状态、代理入口、节点健康、连接概览与订阅维护状态。
+*   **节点健康评分**：测速结果会沉淀为健康分，帮助识别高延迟或不稳定出口。
+*   **节点信息识别**：节点卡片可展示地区、节点类型、协议、倍率、链路与健康分等信息。
+*   **代理质量检测报告**：支持检测出口 IP/地区、基础连通性、面板鉴权、Clash API Auth、HTTP 代理鉴权、AI API 可达性与常用网站/解锁状态。
+*   **智能分流路由**：支持“绕过大陆”、“广告拦截”等高级路由模式，一键重构内核规则。
+*   **统一订阅源**：支持将聚合后的节点库导出为标准的 Clash 订阅链接。
+*   **订阅源维护**：订阅导入会自动去重并记录来源，支持变更预览、手动刷新与可选后台刷新。
+*   **节点库追加导入**：手动向已有节点库添加节点时会追加并去重，不再覆盖原有节点；新节点库导入后会自动进入节点选择页面。
+*   **关键文件可靠写入**：配置、Vault 与节点健康状态采用原子替换写入，降低异常中断造成文件损坏的风险。
+*   **安全性设计**：支持节点加密库（Vault），敏感链接不落盘，全流程本地化安全处理。
+*   **极简部署**：一键脚本启动，支持容器化（Docker）与直接运行。
+
+## 🛠️ 快速启动
+
+### 1. 本地直接运行（推荐）
+
+在项目根目录下执行唯一启动入口：
+
+```bash
+python run.py
+```
+
+该脚本将自动完成以下操作：
+1. 安装/检查 Python 依赖。
+2. 自动下载最新版 `sing-box` 内核。
+3. 启动 Web 管理面板（默认：`http://127.0.0.1:8080`）。
+4. 启动代理内核并根据配置热加载节点。
+
+### 2. Docker 部署 (推荐用于云服务器)
+
+最简单的方式是使用项目自带的一键部署脚本，它会自动处理 Docker 环境安装、环境配置初始化与服务启动：
+
+```bash
+chmod +x 一键部署.sh && ./一键部署.sh
+```
+
+或者手动执行：
+
+```bash
+docker compose --profile panel up -d
+```
+
+### 服务器代理端口说明
+
+Docker 部署时，`.env` 里的 `SINGBOX_HTTP_PORT` 表示公网/宿主机端口，容器内 sing-box 默认固定监听 `2080`。例如 `SINGBOX_HTTP_PORT=5986` 时，客户端应连接 `服务器IP:5986`，Compose 会转发到容器内 `2080`；运行状态页会显示 `HTTP :5986`，并在详情里标注 `公网 :5986 · 内部 :2080`。修改端口后需要执行 `docker compose --profile panel up -d --force-recreate`，让面板容器读取新的端口环境变量。
+
+如果修改过 `.env` 端口或升级了 Compose 配置，请执行：
+
+```bash
+docker compose --profile panel up -d --force-recreate
+python scripts/diagnose_server.py
+```
+
+直接在服务器上运行 `python run.py` 时，管理面板默认仅监听本机回环地址；如需公网访问面板，请显式使用 `python run.py --panel-host 0.0.0.0`，并在安全组/防火墙中放行面板端口 `8080` 与代理公网端口。
+
+### HTTPS 代理入口
+
+如果希望客户端到 NetHub 的代理连接也使用 TLS，可以启用 HTTPS Forward Proxy。准备证书后，将证书目录挂载到容器内 `/certs`，并在 `.env` 中配置：
+
+```env
+SINGBOX_HTTPS_PROXY_ENABLED=1
+SINGBOX_HTTPS_PROXY_PUBLIC_PORT=2443
+SINGBOX_TLS_CERT_DIR=./certs
+SINGBOX_TLS_CERT_PATH=/certs/fullchain.pem
+SINGBOX_TLS_KEY_PATH=/certs/privkey.pem
+SINGBOX_TLS_SERVER_NAME=proxy.example.com
+```
+
+更新配置后重新生成/导入节点并重建容器：
+
+```bash
+docker compose --profile panel up -d --force-recreate
+python scripts/diagnose_server.py
+```
+
+客户端需选择支持 HTTPS Proxy 的软件，代理地址填写 `https://proxy.example.com:2443`。Cloudflare 普通橙云/Origin Rules 仍不适合承载该 forward proxy 流量，建议 DNS only 直连服务器。
+
+## 📁 目录结构
+
+*   `run.py`: **主启动入口**。负责全栈服务的初始化与运行。
+*   `panel/`: **网枢管理后台**。包含前端界面、REST API 及中间件逻辑。
+*   `core/`: **核心逻辑库**。处理配置生成、节点加密等底层业务。
+*   `scripts/`: **维护工具箱**。包含手动生成配置等辅助脚本。
+*   `data/`: **数据存储**。存放节点加密库、审计日志及运行状态。
+*   `bin/`: **二进制目录**。存放 sing-box 内核执行程序。
+
+## ⚙️ 运维指引
+
+*   **手动生成配置**：`python scripts/generate_singbox.py`
+*   **验证代理状态**：`curl -x http://127.0.0.1:2080 https://www.google.com -I`
+*   **检测节点质量**：进入 Web 面板「节点选择」，点击「检测常用网站」打开代理质量检测报告，可一键检测或单独检测常用网站、解锁状态、鉴权与 AI API 可达性。
+*   **查看系统日志**：可通过 Web 面板实时查看，或直接查阅 `data/panel_audit.jsonl`。
+*   **Docker 容器维护与更新**：
+    *   **重构镜像并重新拉起服务（推荐日常更新）**：`sudo docker compose --profile panel up -d --build --force-recreate`
+    *   **无缓存全新编译镜像并强制重建容器**：`sudo docker compose --profile panel build --no-cache && sudo docker compose --profile panel up -d --force-recreate`
+    *   **优雅关闭并彻底释放容器与网络桥接**：`sudo docker compose --profile panel down`
+*   **生产依赖锁定**：容器构建默认使用 `requirements.lock`；本地开发仍可使用 `requirements.txt`。
+*   **配置模板覆盖**：设置 `SINGBOX_TEMPLATE_PATH=/path/to/template.json` 可对生成的 sing-box 配置做 JSON 深度覆盖。
+*   **订阅后台刷新**：设置 `VAULT_PASSWORD` 与 `PANEL_SUB_REFRESH_INTERVAL_MIN` 后，面板会按间隔刷新记录过来源的订阅库。
+
+## ⚠️ 安全提示
+
+1.  **强密码建议**：请务必在 `.env` 中设置复杂的 `PANEL_ADMIN_PASSWORD` 与 `CLASH_API_SECRET`。
+2.  **端口保护**：默认 HTTP 代理端口为 `5986`，管理面板端口为 `8080`（支持在 `.env` 中通过 `SINGBOX_HTTP_PORT` 与 `PANEL_PORT` 自定义端口）。在公网环境运行时，强烈建议使用一键部署或修改为其它随机高位端口以提升安全性。
+3.  **密钥安全**：`.env` 与 `config.json` 包含敏感信息，已默认被 Git 忽略，请勿手动上传至公共仓库。
+
+---
+© 网枢 NetHub

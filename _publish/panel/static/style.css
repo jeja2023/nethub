@@ -752,10 +752,6 @@ button.link:hover {
   z-index: 100;
 }
 
-#modal-overlay {
-  z-index: 200; /* 确认/表单弹窗层级，确保在其他大弹窗之上 */
-}
-
 .modal-overlay#modal-overlay {
   z-index: 3000;
 }
