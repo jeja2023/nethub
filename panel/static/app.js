@@ -1542,6 +1542,11 @@
     try {
       const r = await api("/api/vaults");
       const vaults = r.vaults || [];
+      const currentTarget = getVaultTarget();
+      const fallbackTarget = vaults.find((v) => v && v.enabled)?.name || vaults[0]?.name || "";
+      if ((!currentTarget || !vaults.some((v) => v && v.name === currentTarget)) && fallbackTarget) {
+        setVaultTarget(fallbackTarget);
+      }
       tbody.innerHTML = "";
       let idx = 1;
       for (const v of vaults) {
@@ -1893,6 +1898,9 @@
           });
           await loadVaultStatus();
           await renderVaultManageTable();
+          setVaultTarget(name);
+          currentImportVault = name;
+          currentImportPassword = pw;
           if (msg) {
             show(msg, true);
             msg.classList.remove("err");
